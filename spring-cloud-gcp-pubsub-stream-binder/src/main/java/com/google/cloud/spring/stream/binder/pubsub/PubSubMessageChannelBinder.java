@@ -26,6 +26,9 @@ import com.google.cloud.spring.stream.binder.pubsub.properties.PubSubConsumerPro
 import com.google.cloud.spring.stream.binder.pubsub.properties.PubSubExtendedBindingProperties;
 import com.google.cloud.spring.stream.binder.pubsub.properties.PubSubProducerProperties;
 import com.google.cloud.spring.stream.binder.pubsub.provisioning.PubSubChannelProvisioner;
+import java.util.Collections;
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import org.springframework.cloud.stream.binder.AbstractMessageChannelBinder;
 import org.springframework.cloud.stream.binder.BinderSpecificPropertiesProvider;
 import org.springframework.cloud.stream.binder.ExtendedConsumerProperties;
@@ -53,6 +56,9 @@ public class PubSubMessageChannelBinder
   private final PubSubChannelProvisioner pubSubChannelProvisioner;
 
   private HealthTrackerRegistry healthTrackerRegistry;
+
+  private final List<PubSubInboundChannelAdapter> subscriberAdapters =
+      new CopyOnWriteArrayList<>();
 
   public PubSubMessageChannelBinder(
       String[] headersToEmbed,
@@ -117,6 +123,8 @@ public class PubSubMessageChannelBinder
     adapter.setAckMode(properties.getExtension().getAckMode());
     adapter.setBeanFactory(getBeanFactory());
 
+    this.subscriberAdapters.add(adapter);
+
     return adapter;
   }
 
@@ -154,7 +162,18 @@ public class PubSubMessageChannelBinder
       String group,
       ExtendedConsumerProperties<PubSubConsumerProperties> consumerProperties) {
     super.afterUnbindConsumer(destination, group, consumerProperties);
+    this.subscriberAdapters.removeIf(
+        adapter -> adapter.getSubscriptionName().equals(destination.getName()));
     this.pubSubChannelProvisioner.afterUnbindConsumer(destination);
+  }
+
+  /**
+   * Returns the inbound channel adapters created by this binder, for health reporting.
+   *
+   * @return the currently bound subscriber adapters
+   */
+  public List<PubSubInboundChannelAdapter> getSubscriberAdapters() {
+    return Collections.unmodifiableList(this.subscriberAdapters);
   }
 
   @Override

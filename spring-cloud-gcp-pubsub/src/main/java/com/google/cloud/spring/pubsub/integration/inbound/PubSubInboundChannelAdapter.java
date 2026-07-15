@@ -16,6 +16,7 @@
 
 package com.google.cloud.spring.pubsub.integration.inbound;
 
+import com.google.api.core.ApiService;
 import com.google.cloud.pubsub.v1.Subscriber;
 import com.google.cloud.spring.pubsub.core.health.HealthTrackerRegistry;
 import com.google.cloud.spring.pubsub.core.subscriber.PubSubSubscriberOperations;
@@ -23,6 +24,7 @@ import com.google.cloud.spring.pubsub.integration.AckMode;
 import com.google.cloud.spring.pubsub.integration.PubSubHeaderMapper;
 import com.google.cloud.spring.pubsub.support.GcpPubSubHeaders;
 import com.google.cloud.spring.pubsub.support.converter.ConvertedBasicAcknowledgeablePubsubMessage;
+import com.google.common.util.concurrent.MoreExecutors;
 import com.google.pubsub.v1.ProjectSubscriptionName;
 import java.util.Map;
 import org.apache.commons.logging.Log;
@@ -55,6 +57,14 @@ public class PubSubInboundChannelAdapter extends MessageProducerSupport {
   private HealthTrackerRegistry healthTrackerRegistry;
 
   /**
+   * The failure that permanently stopped the underlying {@link Subscriber}, or {@code null} while
+   * the subscriber is alive. A failed subscriber never recovers on its own: the streaming pull is
+   * gone, so the adapter stops itself and no further messages are delivered until it is started
+   * again.
+   */
+  private volatile Throwable subscriberFailure;
+
+  /**
    * Instantiates a streaming Pub/Sub subscription adapter.
    *
    * @param pubSubSubscriberOperations {@link PubSubSubscriberOperations} to use
@@ -68,6 +78,10 @@ public class PubSubInboundChannelAdapter extends MessageProducerSupport {
     Assert.notNull(subscriptionName, "Pub/Sub subscription name can't be null.");
     this.pubSubSubscriberOperations = pubSubSubscriberOperations;
     this.subscriptionName = subscriptionName;
+  }
+
+  public String getSubscriptionName() {
+    return this.subscriptionName;
   }
 
   public AckMode getAckMode() {
@@ -118,6 +132,8 @@ public class PubSubInboundChannelAdapter extends MessageProducerSupport {
     super.doStart();
 
     addToHealthRegistry();
+
+    this.subscriberFailure = null;
 
     this.subscriber =
         this.pubSubSubscriberOperations.subscribeAndConvert(
@@ -194,6 +210,63 @@ public class PubSubInboundChannelAdapter extends MessageProducerSupport {
     if (healthCheckEnabled()) {
       healthTrackerRegistry.addListener(subscriber);
     }
+
+    if (this.subscriber == null) {
+      return;
+    }
+
+    // A Subscriber is an ApiService: on a non-retryable streaming-pull error it transitions to
+    // FAILED and stops delivering messages for good. Without this listener that transition is
+    // invisible to Spring -- the adapter keeps reporting isRunning() == true and the binding keeps
+    // reporting state=running while throughput is silently zero.
+    this.subscriber.addListener(
+        new ApiService.Listener() {
+          @Override
+          public void failed(ApiService.State from, Throwable failure) {
+            onSubscriberFailure(from, failure);
+          }
+        },
+        MoreExecutors.directExecutor());
+  }
+
+  private void onSubscriberFailure(ApiService.State from, Throwable failure) {
+    this.subscriberFailure = failure;
+
+    LOGGER.error(
+        String.format(
+            "Pub/Sub subscriber for subscription '%s' failed from state %s. Stopping the "
+                + "adapter; no further messages will be received until it is started again.",
+            this.subscriptionName, from));
+    // Log the cause separately so the message survives JCL bridges that drop the
+    // (message, throwable) overload; same pattern as logWarning above.
+    LOGGER.error(failure.getMessage(), failure);
+
+    // Stop the adapter so that isRunning() -- and the state of any Spring Cloud Stream binding
+    // built on top of it -- reflects that this consumer is no longer receiving messages.
+    if (isRunning()) {
+      stop();
+    }
+  }
+
+  /**
+   * Returns the failure that permanently stopped the underlying {@link Subscriber}, if any.
+   *
+   * <p>A non-null value means the streaming pull for this subscription died and the adapter
+   * stopped itself as a result.
+   *
+   * @return the failure that stopped the subscriber, or {@code null} if it is alive
+   */
+  public Throwable getSubscriberFailure() {
+    return this.subscriberFailure;
+  }
+
+  /**
+   * Whether the underlying {@link Subscriber} has permanently failed.
+   *
+   * @return true if the subscriber failed and is no longer receiving messages
+   */
+  public boolean isSubscriberFailed() {
+    return this.subscriberFailure != null;
   }
 
   private void processedMessage(ProjectSubscriptionName projectSubscriptionName) {

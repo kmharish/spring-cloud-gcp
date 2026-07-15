@@ -21,11 +21,13 @@ import com.google.cloud.spring.pubsub.core.PubSubTemplate;
 import com.google.cloud.spring.pubsub.core.health.HealthTrackerRegistry;
 import com.google.cloud.spring.pubsub.integration.inbound.PubSubInboundChannelAdapter;
 import com.google.cloud.spring.pubsub.integration.outbound.PubSubMessageHandler;
+import com.google.cloud.spring.stream.binder.pubsub.PubSubBinderHealthIndicator;
 import com.google.cloud.spring.stream.binder.pubsub.PubSubMessageChannelBinder;
 import com.google.cloud.spring.stream.binder.pubsub.aot.PubSubConsumerPropertiesRuntimeHints;
 import com.google.cloud.spring.stream.binder.pubsub.properties.PubSubExtendedBindingProperties;
 import com.google.cloud.spring.stream.binder.pubsub.provisioning.PubSubChannelProvisioner;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -70,5 +72,20 @@ public class PubSubBinderConfiguration {
     }
 
     return binder;
+  }
+
+  /**
+   * Registers the binder health indicator when Spring Boot's health support is on the classpath.
+   * Spring Cloud Stream surfaces it under the {@code binders} health contributor.
+   */
+  @Configuration(proxyBeanMethods = false)
+  @ConditionalOnClass(name = "org.springframework.boot.health.contributor.HealthIndicator")
+  protected static class PubSubBinderHealthIndicatorConfiguration {
+
+    @Bean
+    public PubSubBinderHealthIndicator pubSubBinderHealthIndicator(
+        PubSubMessageChannelBinder pubSubBinder) {
+      return new PubSubBinderHealthIndicator(pubSubBinder);
+    }
   }
 }

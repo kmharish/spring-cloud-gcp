@@ -306,6 +306,29 @@ class PubSubMessageChannelBinderTests {
   }
 
   @Test
+  void createdConsumerAdaptersAreTrackedForHealthReporting() {
+    when(consumerDestination.getName()).thenReturn("test-subscription");
+    baseContext.run(
+        ctx -> {
+          PubSubMessageChannelBinder binder = ctx.getBean(PubSubMessageChannelBinder.class);
+          PubSubExtendedBindingProperties props =
+              ctx.getBean("pubSubExtendedBindingProperties", PubSubExtendedBindingProperties.class);
+          ExtendedConsumerProperties<PubSubConsumerProperties> consumerProperties =
+              new ExtendedConsumerProperties<>(props.getExtendedConsumerProperties("test"));
+
+          MessageProducer messageProducer =
+              binder.createConsumerEndpoint(consumerDestination, "testGroup", consumerProperties);
+
+          assertThat(binder.getSubscriberAdapters())
+              .containsExactly((PubSubInboundChannelAdapter) messageProducer);
+
+          binder.afterUnbindConsumer(consumerDestination, "testGroup", consumerProperties);
+
+          assertThat(binder.getSubscriberAdapters()).isEmpty();
+        });
+  }
+
+  @Test
   void testConsumerEndpointCreationWithNoHeadersProvided() {
     when(consumerDestination.getName()).thenReturn("test-subscription");
     baseContext.run(

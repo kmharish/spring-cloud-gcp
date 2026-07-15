@@ -156,6 +156,15 @@ These resources will be created:
 
 
 
+==== Subscriber Failure Detection and Binder Health
+
+A Pub/Sub subscriber can fail permanently, for example after a non-retryable streaming pull error.
+When this happens, the failure is logged at `ERROR` level and the consumer endpoint stops itself, so the state of the binding reflects that messages are no longer being received.
+
+If Spring Boot health support is on the classpath, the binder also contributes a health indicator that reports `DOWN` while any subscriber created by the binder has failed.
+It appears under the `binders` health contributor of the Spring Boot health endpoint, with the affected subscription names and failure causes in the details.
+Restarting the binding (for example, through the `bindings` actuator endpoint) creates a fresh subscriber and clears the failure.
+
 ==== Endpoint Customization
 
 You may customize channel routing by defining a `ConsumerEndpointCustomizer` in your autoconfiguration. This is useful if you want to customize the default configurations provided by the Pub/Sub Spring Cloud Stream Binder.
